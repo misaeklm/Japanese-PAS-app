@@ -21,7 +21,7 @@
             flex-direction: column;
             align-items: center;
         }
-        h1 { color: var(--primary-color); font-size: 24px; margin-bottom: 10px; text-align: center; }
+        h1 { color: var(--primary-color); font-size: 24px; margin-bottom: 5px; text-align: center; }
         .subtitle { font-size: 14px; color: #666; margin-bottom: 20px; text-align: center; }
         .container { width: 100%; max-width: 500px; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); padding: 15px; box-sizing: border-box; }
         .audio-group { margin-bottom: 15px; }
@@ -33,12 +33,13 @@
         .controls { margin-top: 20px; width: 100%; max-width: 500px; }
         .stop-btn { background-color: #cc0000; color: white; border: none; border-radius: 8px; padding: 12px 30px; font-size: 16px; font-weight: bold; cursor: pointer; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .stop-btn:active { background-color: #990000; }
+        .status-bar { font-size: 11px; color: #888; margin-top: 5px; text-align: center; }
     </style>
 </head>
 <body>
 
     <h1>✈️ Cabin Announcement Player</h1>
-    <div class="subtitle">Offline Ready</div>
+    <div class="subtitle">Offline Storage Enabled</div>
 
     <div class="container">
         <!-- Pre-Take-Off -->
@@ -96,13 +97,35 @@
 
     <div class="controls">
         <button class="stop-btn" onclick="stopAllAudio()">🛑 STOP ALL</button>
+        <div id="status" class="status-bar">Initializing database...</div>
     </div>
 
     <script>
         let currentAudio = null;
         let currentButton = null;
+        const CACHE_NAME = 'airline-announcement-cache-v1';
 
-        function playAudio(fileName, buttonElement) {
+        // データベース（キャッシュ）の初期化と事前保存
+        async function initCache() {
+            try {
+                const cache = await caches.open(CACHE_NAME);
+                const statusDiv = document.getElementById('status');
+                statusDiv.innerText = "Saving audio files for offline use...";
+                
+                // 17個の音声ファイルをバックグラウンドで強制保存
+                for(let i=1; i<=17; i++) {
+                    await cache.add(`Audio${i}.mp3`);
+                }
+                statusDiv.innerText = "🟢 Offline Ready (All files downloaded)";
+            } catch (e) {
+                document.getElementById('status').innerText = "⚠️ Ready. (Tap buttons once online to force save)";
+            }
+        }
+
+        window.addEventListener('load', initCache);
+
+        async function playAudio(fileName, buttonElement) {
+            // 再生中のものを停止
             if (currentAudio) {
                 currentAudio.pause();
                 currentAudio.currentTime = 0;
@@ -115,20 +138,45 @@
                 return;
             }
 
-            currentAudio = new Audio(fileName);
             currentButton = buttonElement;
 
-            currentAudio.play().then(() => {
-                currentButton.classList.add('playing');
-            }).catch(error => {
-                alert("Playback Error: The audio file may be missing or named incorrectly.\nFile: " + fileName);
-            });
+            try {
+                // まずはオフラインキャッシュからデータを探す
+                const cache = await caches.open(CACHE_NAME);
+                const cachedResponse = await cache.match(fileName);
+                
+                if (cachedResponse) {
+                    const blob = await cachedResponse.blob();
+                    const objectURL = URL.createObjectURL(blob);
+                    currentAudio = new Audio(objectURL);
+                } else {
+                    // キャッシュになければ通常読み込み（初回のみ自動保存）
+                    currentAudio = new Audio(fileName);
+                    await cache.add(fileName); 
+                }
 
-            currentAudio.onended = function() {
-                if (currentButton) currentButton.classList.remove('playing');
-                currentAudio = null;
-                currentButton = null;
-            };
+                currentAudio.play().then(() => {
+                    currentButton.classList.add('playing');
+                }).catch(error => {
+                    showError(fileName);
+                });
+
+                currentAudio.onended = function() {
+                    if (currentButton) currentButton.classList.remove('playing');
+                    currentAudio = null;
+                    currentButton = null;
+                };
+
+            } catch (error) {
+                showError(fileName);
+            }
+        }
+
+        function showError(fileName) {
+            alert("Playback Error: The audio file may be missing or not fully downloaded for offline use yet.\nFile: " + fileName);
+            if (currentButton) currentButton.classList.remove('playing');
+            currentAudio = null;
+            currentButton = null;
         }
 
         function stopAllAudio() {
